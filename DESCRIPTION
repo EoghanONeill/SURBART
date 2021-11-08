@@ -1,10 +1,10 @@
 Package: SURBART
-Title: What the Package Does (One Line, Title Case)
+Title: Seemingly Unrelated Regression Bayesian Additive Regression Trees
 Version: 0.0.0.9000
 Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"),
-           comment = c(ORCID = "YOUR-ORCID-ID"))
-Description: What the package does (one paragraph).
+    person("Eoghan", "O'Neill", , "oneill.eoghan.1@gmail.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-1274-4248"))
+Description: This package is an attempt to implement Seemingly Unrelated Regression Bayesian Additive Regression Trees as described by Chakraborty (2016).
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -14,3 +14,8 @@ Depends:
 LazyData: true
 URL: https://github.com/EoghanONeill/SURBART
 BugReports: https://github.com/EoghanONeill/SURBART/issues
+LinkingTo: 
+    RcppArmadillo,
+    Rcpp
+Imports: 
+    Rcpp
