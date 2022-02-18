@@ -96,23 +96,64 @@ Seemingly Unrelated Regression Bayesian Additive Regression Trees implemented us
 }
 \examples{
 
-#example taken from https://stats.idre.ucla.edu/r/dae/tobit-models/
+library(foreign)
+library(systemfit)
 
-dat <- read.csv("https://stats.idre.ucla.edu/stat/data/tobit.csv")
+hsb2 <- read.dta("https://stats.idre.ucla.edu/stat/stata/notes/hsb2.dta")
 
-train_inds <- sample(1:200,190)
-test_inds <- (1:200)[-train_inds]
+train_inds <- sample(1:nrow(hsb2),size = 180, replace = FALSE)
+test_inds <- (1:nrow(hsb2))[-train_inds]
 
-ytrain <- dat$apt[train_inds]
-ytest <- dat$apt[test_inds]
+hsb2train <- hsb2[train_inds,]
+hsb2test <- hsb2[test_inds,]
 
-xtrain <- cbind(dat$read, dat$math)[train_inds,]
-xtest <- cbind(dat$read, dat$math)[test_inds,]
 
-tobart_res <- tbart1(xtrain,xtest,ytrain,
-                    below_cens = -Inf,
-                    above_cens = 800,
-                    n.iter = 400,
-                    n.burnin = 100)
+r1 <- read~female + as.numeric(ses) + socst
+r2 <- math~female + as.numeric(ses) + science
+
+fitsur <- systemfit(list(readreg = r1, mathreg = r2), data=hsb2train)
+
+linSURpreds <- predict(fitsur, hsb2test)
+
+sqrt(mean((linSURpreds$readreg.pred-hsb2test$read)^2))
+
+sqrt(mean((linSURpreds$mathreg.pred-hsb2test$math)^2))
+
+
+
+xtrain <- list()
+xtrain[[1]] <- cbind(hsb2train$female, as.numeric(hsb2train$ses), hsb2train$socst)
+xtrain[[2]] <- cbind(hsb2train$female, as.numeric(hsb2train$ses), hsb2train$science)
+
+xtest <- list()
+xtest[[1]] <- cbind(hsb2test$female, as.numeric(hsb2test$ses), hsb2test$socst)
+xtest[[2]] <- cbind(hsb2test$female, as.numeric(hsb2test$ses), hsb2test$science)
+
+ylist <- list()
+ylist[[1]] <- hsb2train$read
+ylist[[2]] <- hsb2train$math
+
+
+
+surbartres <- surbart_eqbyeq(x.train = xtrain, #either one matrix or list
+                             x.test = xtest, #either one matrix or list
+                             y = ylist,
+                             2,
+                             nrow(hsb2train),
+                             nrow(hsb2test),
+                             n.iter = 1000,
+                             n.burnin = 100)
+
+
+readpredsurbart <- apply(surbartres$mutest_draws[,,1],2,mean)
+
+mathpredsurbart <- apply(surbartres$mutest_draws[,,2],2,mean)
+
+sqrt(mean((readpredsurbart  -hsb2test$read)^2))
+
+sqrt(mean((mathpredsurbart- hsb2test$math)^2))
+
+
+
 
 }
