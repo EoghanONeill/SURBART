@@ -17,5 +17,9 @@ BugReports: https://github.com/EoghanONeill/SURBART/issues
 LinkingTo: 
     RcppArmadillo,
     Rcpp
-Imports: 
+Imports:
+    MASS,
+    dbarts,
+    truncnorm,
+    LaplacesDemon,
     Rcpp
