@@ -22,4 +22,6 @@ Imports:
     dbarts,
     truncnorm,
     LaplacesDemon,
-    Rcpp
+    Rcpp,
+    stochvol,
+    invgamma

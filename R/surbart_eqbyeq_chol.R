@@ -1,7 +1,7 @@
 
 #' @title Seemingly Unrelated Regression Bayesian Additive Regression Trees implemented using MCMC with equation-by-equation tree draws.
 #'
-#' @description Seemingly Unrelated Regression Bayesian Additive Regression Trees implemented using MCMC with equation-by-equation tree draws.
+#' @description This implementation dies not work as well as the other implementations in this package. Seemingly Unrelated Regression Bayesian Additive Regression Trees implemented using MCMC with equation-by-equation tree draws.
 #' @import dbarts
 #' @import truncnorm
 #' @import LaplacesDemon
@@ -79,7 +79,7 @@
 #'
 #'
 #'
-#' surbartres <- surbart_eqbyeq(x.train = xtrain, #either one matrix or list
+#' surbartres <- surbart_eqbyeq_chol(x.train = xtrain, #either one matrix or list
 #'                              x.test = xtest, #either one matrix or list
 #'                              y = ylist,
 #'                              2,
@@ -101,37 +101,36 @@
 #'
 #'
 #' @export
-surbart_eqbyeq <- function(x.train, #either one matrix or list
-                   x.test, #either one matrix or list
-                   y,
-                   num_outcomes,
-                   num_obs,
-                   num_test_obs,
-                   n.iter=1000,
-                   n.burnin=100,
-                   n.trees = 50L,
-                   n.burn = 0L,
-                   n.samples = 1L,
-                   n.thin = 1L,
-                   n.chains = 1,
-                   n.threads = guessNumCores(),
-                   printEvery = 100L,
-                   printCutoffs = 0L,
-                   rngKind = "default",
-                   rngNormalKind = "default",
-                   rngSeed = NA_integer_,
-                   updateState = FALSE,
-                   tree.prior = dbarts:::cgm,
-                   node.prior = dbarts:::normal,
-                   resid.prior = dbarts:::chisq,
-                   proposal.probs = c(birth_death = 0.5, swap = 0.1, change = 0.4, birth = 0.5),
-                   sigmadbarts = NA_real_,
-                   print.opt = 100,
-                   quiet = FALSE,
-                   outcome_draws = FALSE){
+surbart_eqbyeq_chol <- function(x.train, #either one matrix or list
+                           x.test, #either one matrix or list
+                           y,
+                           num_outcomes,
+                           num_obs,
+                           num_test_obs,
+                           n.iter=1000,
+                           n.burnin=100,
+                           n.trees = 50L,
+                           n.burn = 0L,
+                           n.samples = 1L,
+                           n.thin = 1L,
+                           n.chains = 1,
+                           n.threads = guessNumCores(),
+                           printEvery = 100L,
+                           printCutoffs = 0L,
+                           rngKind = "default",
+                           rngNormalKind = "default",
+                           rngSeed = NA_integer_,
+                           updateState = FALSE,
+                           tree.prior = dbarts:::cgm,
+                           node.prior = dbarts:::normal,
+                           resid.prior = dbarts:::chisq,
+                           proposal.probs = c(birth_death = 0.5, swap = 0.1, change = 0.4, birth = 0.5),
+                           sigmadbarts = NA_real_,
+                           print.opt = 100,
+                           quiet = FALSE,
+                           outcome_draws = FALSE){
 
-
-
+  print("this implementation does not work as well as teh other implementations included with this package")
 
   # if(is.vector(x.train) | is.factor(x.train)| is.data.frame(x.train)) x.train = as.matrix(x.train)
   # if(is.vector(x.test) | is.factor(x.test)| is.data.frame(x.test)) x.test = as.matrix(x.test)
@@ -245,7 +244,7 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
 
   ch <- chol(Sigma_mat)
   dd <- diag(ch)
-  Lmat <- t(ch/dd)
+  # Lmat <- t(ch/dd)
   Hvec <- dd
 
   #Set tree sampler parameters
@@ -300,14 +299,14 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
       Xmat.test <- data.frame(x = Xtestlist[[jj]] )
 
       sampler.list[[jj]] <- dbarts(y ~ .,
-                            data = Xmat.train,
-                            test = Xmat.test,
-                            control = control,
-                            tree.prior = tree.prior,
-                            node.prior = node.prior,
-                            resid.prior = resid.prior,
-                            proposal.probs = proposal.probs,
-                            sigma = sigmadbarts
+                                   data = Xmat.train,
+                                   test = Xmat.test,
+                                   control = control,
+                                   tree.prior = tree.prior,
+                                   node.prior = node.prior,
+                                   resid.prior = resid.prior,
+                                   proposal.probs = proposal.probs,
+                                   sigma = sigmadbarts
       )
     }
 
@@ -337,6 +336,7 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
 
 
   eta <- matrix(NA, nrow = num_obs, ncol =  num_outcomes)
+  epsilon <- matrix(NA, nrow = num_obs, ncol =  num_outcomes)
 
   # start Gibbs sampler
   # show progress
@@ -361,7 +361,8 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
         #LDL decomposition of covariance matrix
         #D in LDL deomposition, variances of each error in transformed equations
 
-        A0_mm <- Lmat[mm,1:(mm-1)]
+        # A0_mm <- Lmat[mm,1:(mm-1)]
+        A0_mm <- ch[mm,1:(mm-1)]
         # print("Z_mm =")
         # print(Z_mm)
         #
@@ -369,7 +370,8 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
         # print(A0_mm)
 
         if(iter ==1){
-          # sampler.list[[mm]]$setResponse(y = ymat[,mm] )
+          sampler.list[[mm]]$setResponse(y = ymat[,mm] )
+          # sampler.list[[mm]]$setSigma(sigma = Hvec[mm])
 
         }else{
           sampler.list[[mm]]$setResponse(y = ymat[,mm] - Z_mm%*%(A0_mm))
@@ -389,7 +391,13 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
       # sigma.mat[mm,] <- rep_mm$sigma
 
       if (any(is.na(rep_mm$train))) break
-      eta[,mm] <- ymat[,mm] - rep_mm$train[,1]
+      epsilon[,mm] <- ymat[,mm] - rep_mm$train[,1]
+      if(mm==1){
+        eta[,mm] <- (ymat[,mm] - rep_mm$train[,1])/Hvec[mm]
+      }else{
+        eta[,mm] <- (ymat[,mm] - rep_mm$train[,1] -  Z_mm%*%(A0_mm))/Hvec[mm]
+      }
+
       # A_draw[,mm] <- X.ginv%*%rep_mm$train
       preds.train[,mm] <-  rep_mm$train[,1]
 
@@ -416,14 +424,16 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
 
 
     # draw next sigma matrix
-    rss <- t(eta) %*% eta
+    rss <- t(epsilon) %*% epsilon
 
     Sigma_mat <- rinvwishart(nu = rprior + num_obs, S = Rprior + rss)
 
     ch <- chol(Sigma_mat)
     dd <- diag(ch)
-    Lmat <- t(ch/dd)
+    # Lmat <- t(ch/dd)
     Hvec <- dd
+
+
 
 
     #now save training and test draws if past burn-in
@@ -461,7 +471,7 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
           Ytest_store[iter_min_burnin,obs_ind , 1:num_outcomes] <- temp_sample*Ysd + Ymu
 
         }
-    }
+      }
 
       #save sigma matrix draws
       #if mm==1, then diagonal with sigma given by independent value from dbarts initial value? or save next draw?
@@ -489,13 +499,13 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
 
 
 
-    if(iter %% print.opt == 0){
-      print(paste("Gibbs Iteration", iter))
-      # print(c(sigma2.alpha, sigma2.beta))
-    }
+    # if(iter %% print.opt == 0){
+    #   print(paste("Gibbs Iteration", iter))
+    #   # print(c(sigma2.alpha, sigma2.beta))
+    # }
 
 
-  }#end iterations of Gibbs sampler
+  }#end iterations of Giibs sampler
 
 
   ret_list <- list()
@@ -511,7 +521,6 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
   ret_list$Sigma_draws <- Sigma_store
 
   return(ret_list)
-
 
 
 }

@@ -1,11 +1,33 @@
+# get posteriors for the horseshoe prior (see Makalic & Schmidt, 2015)
+get.hs <- function(bdraw,lambda.hs,nu.hs,tau.hs,zeta.hs){
+  k <- length(bdraw)
+  if (is.na(tau.hs)){
+    tau.hs <- 1
+  }else{
+    tau.hs <- invgamma::rinvgamma(1,shape=(k+1)/2,rate=1/zeta.hs+sum(bdraw^2/lambda.hs)/2)
+  }
 
-#' @title Seemingly Unrelated Regression Bayesian Additive Regression Trees implemented using MCMC with equation-by-equation tree draws.
+  lambda.hs <- invgamma::rinvgamma(k,shape=1,rate=1/nu.hs+bdraw^2/(2*tau.hs))
+
+  nu.hs <- invgamma::rinvgamma(k,shape=1,rate=1+1/lambda.hs)
+  zeta.hs <- invgamma::rinvgamma(1,shape=1,rate=1+1/tau.hs)
+
+  ret <- list("psi"=(lambda.hs*tau.hs),"lambda"=lambda.hs,"tau"=tau.hs,"nu"=nu.hs,"zeta"=zeta.hs)
+  return(ret)
+}
+
+
+
+
+#' @title Seemingly Unrelated Regression Bayesian Additive Regression Trees implemented using MCMC with equation-by-equation tree draws and Horseshoe prior on covariances.
 #'
-#' @description Seemingly Unrelated Regression Bayesian Additive Regression Trees implemented using MCMC with equation-by-equation tree draws.
+#' @description Seemingly Unrelated Regression Bayesian Additive Regression Trees implemented using MCMC with equation-by-equation tree drawsand Horseshoe prior on covariances. Implementation is edited from Huber et al (2021).
 #' @import dbarts
 #' @import truncnorm
 #' @import LaplacesDemon
 #' @import MASS
+#' @import stochvol
+#' @import invgamma
 #' @param x.train The training covariate data for all training observations. Matrix or list. If one matrix (not a list), then the same set of covariates are used for each outcome. Each element of the list is a covariate matrix that  corresponds to a different outcome variable. Number of rows equal to the number of observations. Number of columns equal to the number of covariates.
 #' @param x.test The test covariate data for all test observations. Matrix or list. If one matrix (not a list), then the same set of covariates are used for each outcome. Each element of the list is a covariate matrix that  corresponds to a different outcome variable. Number of rows equal to the number of observations. Number of columns equal to the number of covariates.
 #' @param y The training data list of vectors of outcomes. The length of the list should equal the number of types of outcomes. Each element of the list should be a vector of length equal to the number of units.
@@ -30,6 +52,7 @@
 #' @param sigmadbarts (dbarts option) A positive numeric estimate of the residual standard deviation. If NA, a linear model is used with all of the predictors to obtain one.
 #' @param print.opt Print every print.opt number of Gibbs samples.
 #' @param quiet Does not show progress bar if TRUE
+#' @param sv If TRUE use stochastic voloatility prior
 #' @param outcome_draws If TRUE, output draws of the outcome.
 #' @export
 #' @return The following objects are returned:
@@ -79,7 +102,7 @@
 #'
 #'
 #'
-#' surbartres <- surbart_eqbyeq(x.train = xtrain, #either one matrix or list
+#' surbartres <- surbart_eqbyeq_hs(x.train = xtrain, #either one matrix or list
 #'                              x.test = xtest, #either one matrix or list
 #'                              y = ylist,
 #'                              2,
@@ -101,34 +124,35 @@
 #'
 #'
 #' @export
-surbart_eqbyeq <- function(x.train, #either one matrix or list
-                   x.test, #either one matrix or list
-                   y,
-                   num_outcomes,
-                   num_obs,
-                   num_test_obs,
-                   n.iter=1000,
-                   n.burnin=100,
-                   n.trees = 50L,
-                   n.burn = 0L,
-                   n.samples = 1L,
-                   n.thin = 1L,
-                   n.chains = 1,
-                   n.threads = guessNumCores(),
-                   printEvery = 100L,
-                   printCutoffs = 0L,
-                   rngKind = "default",
-                   rngNormalKind = "default",
-                   rngSeed = NA_integer_,
-                   updateState = FALSE,
-                   tree.prior = dbarts:::cgm,
-                   node.prior = dbarts:::normal,
-                   resid.prior = dbarts:::chisq,
-                   proposal.probs = c(birth_death = 0.5, swap = 0.1, change = 0.4, birth = 0.5),
-                   sigmadbarts = NA_real_,
-                   print.opt = 100,
-                   quiet = FALSE,
-                   outcome_draws = FALSE){
+surbart_eqbyeq_hs <- function(x.train, #either one matrix or list
+                           x.test, #either one matrix or list
+                           y,
+                           num_outcomes,
+                           num_obs,
+                           num_test_obs,
+                           n.iter=1000,
+                           n.burnin=100,
+                           n.trees = 50L,
+                           n.burn = 0L,
+                           n.samples = 1L,
+                           n.thin = 1L,
+                           n.chains = 1,
+                           n.threads = guessNumCores(),
+                           printEvery = 100L,
+                           printCutoffs = 0L,
+                           rngKind = "default",
+                           rngNormalKind = "default",
+                           rngSeed = NA_integer_,
+                           updateState = FALSE,
+                           tree.prior = dbarts:::cgm,
+                           node.prior = dbarts:::normal,
+                           resid.prior = dbarts:::chisq,
+                           proposal.probs = c(birth_death = 0.5, swap = 0.1, change = 0.4, birth = 0.5),
+                           sigmadbarts = NA_real_,
+                           print.opt = 100,
+                           quiet = FALSE,
+                           sv=FALSE,
+                           outcome_draws = FALSE){
 
 
 
@@ -229,24 +253,62 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
     ymat[,i] <- y[[i]]
   }
 
-  # set various prior parameter values
+  XAOLStemp <- matrix(NA, nrow = num_obs, ncol = num_outcomes)
 
-  rprior <- num_outcomes +1
-  Rprior <- rprior*diag(num_outcomes)
+  for(mm in 1:num_outcomes){
+    A_OLS <- solve(crossprod(Xlist[[i]]))%*%crossprod(Xlist[[i]],y[[i]])
+    XAOLStemp[,mm] <- Xlist[[i]]%*%A_OLS
+  }
+  # Sig_OLS <- crossprod(Y-X%*%A_OLS)/T
+  Sig_OLS <- crossprod(ymat-XAOLStemp)/num_obs
 
-  # initialize sigma draw
+  # Sig_t <- array(0,dim=c(num_obs,num_outcomes,num_outcomes))
+  # for(tt in 1:num_obs){
+  #   Sig_t[tt,,] <- Sig_OLS
+  # }
 
-  rss_initial <- t(ymat) %*% ymat
+  # covariance related objects
+  eta <- matrix(NA,num_obs,num_outcomes)
+  H <- matrix(-3,num_obs,num_outcomes)
+  A0_draw <- diag(num_outcomes)
 
-  print("rss_initial = ")
-  print(rss_initial)
+  # stochastic volatility using stochvol package
+  sv_draw <- list()
+  sv_latent <- list()
+  for (mm in seq_len(num_outcomes)){
+    sv_draw[[mm]] <- list(mu = 0, phi = 0.99, sigma = 0.01, nu = Inf, rho = 0, beta = NA, latent0 = 0)
+    sv_latent[[mm]] <- rep(0,num_obs)
+  }
 
-  Sigma_mat <- rinvwishart(rprior + num_obs, Rprior + rss_initial)
+  # construct priors for SV
+  sv_priors <- list()
+  if(sv){
+    for(mm in 1:num_outcomes){
+      sv_priors[[mm]] <- specify_priors(
+        mu = sv_normal(mean = 0, sd = 10),
+        phi = sv_beta(shape1 = 5, shape2 = 1.5),
+        sigma2 = sv_gamma(shape = 0.5, rate = 10),
+        nu = sv_infinity(),
+        rho = sv_constant(0)
+      )
+    }
+  }else{
+    for(mm in 1:num_outcomes){
+      sv_priors[[mm]] <- specify_priors(
+        mu = sv_constant(0),
+        phi = sv_constant(1-1e-12),
+        sigma2 = sv_constant(1e-12),
+        nu = sv_infinity(),
+        rho = sv_constant(0)
+      )
+    }
+  }
 
-  ch <- chol(Sigma_mat)
-  dd <- diag(ch)
-  Lmat <- t(ch/dd)
-  Hvec <- dd
+  # A_prior <- matrix(0,K,num_outcomes)
+  # theta_A <- matrix(1,K,num_outcomes)
+  theta_A0 <- matrix(1,num_outcomes,num_outcomes)
+
+
 
   #Set tree sampler parameters
 
@@ -273,6 +335,7 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
   #take initial tree draws
 
   sampler.list <- list()
+  svdraw.list <- list()
 
   if(nrow(Xtestlist[[1]])==0){
 
@@ -289,7 +352,7 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
                                    node.prior = node.prior,
                                    resid.prior = resid.prior,
                                    proposal.probs = proposal.probs,
-                                   sigma = sigmadbarts)
+                                   sigma = sqrt(Sig_OLS[jj,jj]))
     }
 
 
@@ -300,22 +363,32 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
       Xmat.test <- data.frame(x = Xtestlist[[jj]] )
 
       sampler.list[[jj]] <- dbarts(y ~ .,
-                            data = Xmat.train,
-                            test = Xmat.test,
-                            control = control,
-                            tree.prior = tree.prior,
-                            node.prior = node.prior,
-                            resid.prior = resid.prior,
-                            proposal.probs = proposal.probs,
-                            sigma = sigmadbarts
+                                   data = Xmat.train,
+                                   test = Xmat.test,
+                                   control = control,
+                                   tree.prior = tree.prior,
+                                   node.prior = node.prior,
+                                   resid.prior = resid.prior,
+                                   proposal.probs = proposal.probs,
+                                   sigma = sqrt(Sig_OLS[jj,jj])
       )
     }
 
   }
 
   sampler.run <- list()
+  sigma.mat <- matrix(NA, num_outcomes, 1)
+
+  # -----------------------------------------------------------------------------
+  # Initialize HS prior on covariances (if any)
+  lambda.A0 <- 1
+  nu.A0 <- 1
+  tau.A0 <- 1
+  zeta.A0 <- 1
+  prior.cov <- rep(1, num_outcomes*(num_outcomes-1)/2)
 
 
+  # ------------------------------------------------------------------
   preds.train <- matrix(NA, num_obs, num_outcomes)
 
   preds.test <- matrix(NA, num_test_obs, num_outcomes)
@@ -336,7 +409,7 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
 
 
 
-  eta <- matrix(NA, nrow = num_obs, ncol =  num_outcomes)
+  # eta <- matrix(NA, nrow = num_obs, ncol =  num_outcomes)
 
   # start Gibbs sampler
   # show progress
@@ -356,28 +429,8 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
     for (mm in 1:num_outcomes){
       if (mm > 1){
         Z_mm <- eta[,1:(mm-1), drop=F]
-        # A0_mm <- A0_draw[mm,1:(mm-1)]
-
-        #LDL decomposition of covariance matrix
-        #D in LDL deomposition, variances of each error in transformed equations
-
-        A0_mm <- Lmat[mm,1:(mm-1)]
-        # print("Z_mm =")
-        # print(Z_mm)
-        #
-        # print("A0_mm =")
-        # print(A0_mm)
-
-        if(iter ==1){
-          # sampler.list[[mm]]$setResponse(y = ymat[,mm] )
-
-        }else{
-          sampler.list[[mm]]$setResponse(y = ymat[,mm] - Z_mm%*%(A0_mm))
-          sampler.list[[mm]]$setSigma(sigma = Hvec[mm])
-        }
-
-
-
+        A0_mm <- A0_draw[mm,1:(mm-1)]
+        sampler.list[[mm]]$setResponse(ymat[,mm] - Z_mm%*%A0_mm)
       }
 
       #Draw all trees for outcome mm in iteration iter
@@ -386,7 +439,7 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
       sampler.run[[mm]] <- rep_mm
 
       #line commented out because sampling from inverse wishart, not the prior from BAVART paper
-      # sigma.mat[mm,] <- rep_mm$sigma
+      sigma.mat[mm,] <- rep_mm$sigma
 
       if (any(is.na(rep_mm$train))) break
       eta[,mm] <- ymat[,mm] - rep_mm$train[,1]
@@ -399,32 +452,57 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
       preds.test[,mm] <-  rep_mm$test[,1]
 
       # count.mat[,mm] <- rep_mm$varcount
-      # if (mm > 1){
-      #   norm_mm <- as.numeric(exp(-.5*sv_latent[[mm]]) * 1/sigma.mat[mm,])
-      #   u_mm <- eta[,1:(mm-1),drop=F]*norm_mm
-      #   eta_mm <- eta[,mm]*norm_mm
-      #   if (mm == 2) v0.inv <- 1/theta_A0[mm,1] else v0.inv <- diag(1/theta_A0[mm,1:(mm-1)])
-      #   V.cov <- solve(crossprod(u_mm) + v0.inv)
-      #   mu.cov <- V.cov %*% crossprod(u_mm, eta_mm)
-      #   mu.cov.draw <- mu.cov + t(chol(V.cov)) %*% rnorm(ncol(V.cov))
-      #   A0_draw[mm,1:(mm-1)] <- mu.cov.draw
-      # }
+      if (mm > 1){
+        norm_mm <- as.numeric(exp(-.5*sv_latent[[mm]]) * 1/sigma.mat[mm,])
+        u_mm <- eta[,1:(mm-1),drop=F]*norm_mm
+        eta_mm <- eta[,mm]*norm_mm
+        if (mm == 2) v0.inv <- 1/theta_A0[mm,1] else v0.inv <- diag(1/theta_A0[mm,1:(mm-1)])
+        V.cov <- solve(crossprod(u_mm) + v0.inv)
+        mu.cov <- V.cov %*% crossprod(u_mm, eta_mm)
+        mu.cov.draw <- mu.cov + t(chol(V.cov)) %*% rnorm(ncol(V.cov))
+        A0_draw[mm,1:(mm-1)] <- mu.cov.draw
+      }
 
 
     } # end loop over mm
 
 
 
-    # draw next sigma matrix
-    rss <- t(eta) %*% eta
+    shock_norm <- eta %*% t(solve(A0_draw))
+    if(sv){
+      for (mm in seq_len(num_outcomes)){
+        svdraw_mm <- svsample_general_cpp(shock_norm[,mm]/sigma.mat[mm], startpara = sv_draw[[mm]], startlatent = sv_latent[[mm]], priorspec = sv_priors[[mm]])
+        sv_draw[[mm]][c("mu", "phi", "sigma")] <- as.list(svdraw_mm$para[, c("mu", "phi", "sigma")])
+        sv_latent[[mm]] <- svdraw_mm$latent
 
-    Sigma_mat <- rinvwishart(nu = rprior + num_obs, S = Rprior + rss)
+        normalizer <- as.numeric(exp(-.5*svdraw_mm$latent))
+        weights.new <- as.numeric(exp(-svdraw_mm$latent))
 
-    ch <- chol(Sigma_mat)
-    dd <- diag(ch)
-    Lmat <- t(ch/dd)
-    Hvec <- dd
+        dat <- dbartsData(formula = ymat[,mm]~Xlist[[mm]],weights=weights.new)
+        sampler.list[[mm]]$setData(dat)
+        # H[,mm] <- log(sigma.mat[mm]^2) + svdraw_mm$latent
+      }
+    }#else{
+    #   H[,mm] <- log(sigma.mat[mm]^2)
+    # }
 
+    # for(tt in seq_len(num_obs)){
+    #   S_tmp <- exp(H[tt,])
+      # S.t <- t(A0_draw)%*%crossprod(diag(S_tmp),(A0_draw))
+      # Sig_t[tt,,] <- S.t
+    # }
+
+    # 2) updating shrinkage priors
+    # hierarchical prior values
+    hs_draw <- get.hs(bdraw=A0_draw[lower.tri(A0_draw)],lambda.hs=lambda.A0,nu.hs=nu.A0,tau.hs=tau.A0,zeta.hs=zeta.A0)
+    lambda.A0 <- hs_draw$lambda
+    nu.A0 <- hs_draw$nu
+    tau.A0 <- hs_draw$tau
+    zeta.A0 <- hs_draw$zeta
+    prior.cov <- hs_draw$psi
+    theta_A0[lower.tri(theta_A0)] <- prior.cov
+    theta_A0[theta_A0>10] <- 10
+    theta_A0[theta_A0<1e-8] <- 1e-8
 
     #now save training and test draws if past burn-in
 
@@ -440,12 +518,25 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
       #save y draws
 
 
+
+
+      #save sigma matrix draws
+      #if mm==1, then diagonal with sigma given by independent value from dbarts initial value? or save next draw?
+
+
+
+
+
+
+      Sigma_store[,,iter_min_burnin] <- (A0_draw%*%diag(as.vector(sigma.mat)^2))%*%t(A0_draw)
+
+
       if(outcome_draws==TRUE){
         #draw each individual's vector of observations from a multivariate normal
         for(obs_ind in 1:num_obs){
           temp_sample <- mvrnorm(n = 1,
                                  mu = preds.train[obs_ind,],
-                                 Sigma = Sigma_mat)
+                                 Sigma = Sigma_store[,,iter_min_burnin])
 
           #Note: element-wise vector multiplication
           Y_store[iter_min_burnin,obs_ind , 1:num_outcomes] <- temp_sample*Ysd + Ymu
@@ -455,21 +546,13 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
         for(obs_ind in 1:num_test_obs){
           temp_sample <- mvrnorm(n = 1,
                                  mu = preds.test[obs_ind,],
-                                 Sigma = Sigma_mat)
+                                 Sigma = Sigma_store[,,iter_min_burnin])
 
           #Note: element-wise vector  multiplication
           Ytest_store[iter_min_burnin,obs_ind , 1:num_outcomes] <- temp_sample*Ysd + Ymu
 
         }
-    }
-
-      #save sigma matrix draws
-      #if mm==1, then diagonal with sigma given by independent value from dbarts initial value? or save next draw?
-
-
-
-      Sigma_store[,,iter_min_burnin] <- Sigma_mat
-
+      }
 
 
     }
@@ -488,14 +571,14 @@ surbart_eqbyeq <- function(x.train, #either one matrix or list
     if(!quiet) setTxtProgressBar(pb, iter)
 
 
+#
+#     if(iter %% print.opt == 0){
+#       print(paste("Gibbs Iteration", iter))
+#       # print(c(sigma2.alpha, sigma2.beta))
+#     }
 
-    if(iter %% print.opt == 0){
-      print(paste("Gibbs Iteration", iter))
-      # print(c(sigma2.alpha, sigma2.beta))
-    }
 
-
-  }#end iterations of Gibbs sampler
+  }#end iterations of Giibs sampler
 
 
   ret_list <- list()
