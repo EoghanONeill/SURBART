@@ -6,6 +6,7 @@
 #' @import truncnorm
 #' @import LaplacesDemon
 #' @import MASS
+#' @import collapse
 #' @param x.train The training covariate data for all training observations. Matrix or list. If one matrix (not a list), then the same set of covariates are used for each outcome. Each element of the list is a covariate matrix that  corresponds to a different outcome variable. Number of rows equal to the number of observations. Number of columns equal to the number of covariates.
 #' @param x.test The test covariate data for all test observations. Matrix or list. If one matrix (not a list), then the same set of covariates are used for each outcome. Each element of the list is a covariate matrix that  corresponds to a different outcome variable. Number of rows equal to the number of observations. Number of columns equal to the number of covariates.
 #' @param y The training data list of vectors of outcomes. The length of the list should equal the number of types of outcomes. Each element of the list should be a vector of length equal to the number of units.
@@ -31,6 +32,10 @@
 #' @param print.opt Print every print.opt number of Gibbs samples.
 #' @param quiet Does not show progress bar if TRUE
 #' @param outcome_draws If TRUE, output draws of the outcome.
+#' @param sparse If equal to TRUE, use Linero Dirichlet prior on splitting probabilities
+#' @param alpha_a_y Linero alpha prior parameter for outcome equation splitting probabilities
+#' @param alpha_b_y Linero alpha prior parameter for outcome equation splitting probabilities
+#' @param alpha_split_prior If true, set hyperprior for Linero alpha parameter
 #' @export
 #' @return The following objects are returned:
 #' \item{mutrain_draws}{Matrix of MCMC draws of expected values for training observations. Number of rows equal to the number of training observations multiplied by the number of outcomes. The rows are ordered by beginning with all N (units') observations for the first outcome variable, then all N for the second outcome variable and so on. Number of columns equals n.iter.}
@@ -128,7 +133,11 @@ surbart_original <- function(x.train, #either one matrix or list
                            sigmadbarts = NA_real_,
                            print.opt = 100,
                            quiet = FALSE,
-                           outcome_draws = FALSE){
+                           outcome_draws = FALSE,
+                           sparse = FALSE,
+                           alpha_a_y = 0.5,
+                           alpha_b_y = 1,
+                           alpha_split_prior = TRUE){
 
 
 
@@ -269,6 +278,58 @@ surbart_original <- function(x.train, #either one matrix or list
   # print("begin dbarts")
 
 
+  if(sparse){
+
+    # s_y_mat <- matrix(NA, nrow = ncol(x.train), ncol = num_outcomes)
+    p_y_vec <- rep(NA, num_outcomes)
+    rho_y_vec <- rep(NA, num_outcomes)
+    alpha_s_y_vec <- rep(NA, num_outcomes)
+    alpha_scale_y_vec <- rep(NA, num_outcomes)
+    # var_count_y_mat <- matrix(NA, nrow = ncol(x.train), ncol = num_outcomes)
+
+    s_y_list <- list() # matrix(NA, nrow = ncol(x.train), ncol = num_outcomes)
+    var_count_y_list <- list() # matrix(NA, nrow = ncol(x.train), ncol = num_outcomes)
+
+    for (jj in 1:num_outcomes){
+
+      p_y <- ncol(Xlist[[jj]])
+
+      s_y <- rep(1 / p_y, p_y) # probability vector to be used during the growing process for DART feature weighting
+      rho_y <- p_y # For DART
+
+      if(alpha_split_prior){
+        alpha_s_y <- p_y
+      }else{
+        alpha_s_y <- 1
+      }
+      alpha_scale_y <- p_y
+
+      var_count_y <- rep(0, p_y)
+
+
+      # s_y_mat[, jj] <- s_y
+      p_y_vec[jj] <- p_y
+      rho_y_vec[jj] <- rho_y
+      alpha_s_y_vec[jj] <- alpha_s_y
+      alpha_scale_y_vec[jj] <- alpha_scale_y
+      # var_count_y_mat[,jj] <- var_count_y
+
+      s_y_list[[jj]] <- s_y
+      var_count_y_list[[jj]] <- var_count_y
+
+    }
+
+    alpha_s_y_store_arr <- matrix(NA, nrow = num_outcomes, ncol =  n.iter )
+    # var_count_y_store_arr <- array(NA, dim = c( p_y, num_outcomes, n.iter ))
+    # s_prob_y_store_arr <- array(NA, dim = c( p_y, num_outcomes, n.iter ))
+
+    var_count_y_store_list <- list()
+    s_prob_y_store_list <- list()
+
+  }
+
+
+
   #take initial tree draws
 
   sampler.list <- list()
@@ -280,7 +341,7 @@ surbart_original <- function(x.train, #either one matrix or list
 
       Xmat.train <- data.frame(y = y[[jj]], x = Xlist[[jj]] )
 
-      sampler.list[[jj]] <- dbarts(y ~ .,
+      sampler <- dbarts(y ~ .,
                                    data = Xmat.train,
                                    #test = x.test,
                                    control = control,
@@ -289,6 +350,15 @@ surbart_original <- function(x.train, #either one matrix or list
                                    resid.prior = resid.prior,
                                    proposal.probs = proposal.probs,
                                    sigma = sigmadbarts)
+
+      if(sparse){
+        tempmodel <- sampler$model
+        tempmodel@tree.prior@splitProbabilities <- s_y_list[[jj]]
+        sampler$setModel(newModel = tempmodel)
+      }
+
+      sampler.list[[jj]] <- sampler
+
     }
 
 
@@ -298,7 +368,7 @@ surbart_original <- function(x.train, #either one matrix or list
       Xmat.train <- data.frame(y = y[[jj]], x = Xlist[[jj]] )
       Xmat.test <- data.frame(x = Xtestlist[[jj]] )
 
-      sampler.list[[jj]] <- dbarts(y ~ .,
+      sampler <- dbarts(y ~ .,
                                    data = Xmat.train,
                                    test = Xmat.test,
                                    control = control,
@@ -308,6 +378,15 @@ surbart_original <- function(x.train, #either one matrix or list
                                    proposal.probs = proposal.probs,
                                    sigma = sigmadbarts
       )
+
+      if(sparse){
+        tempmodel <- sampler$model
+        tempmodel@tree.prior@splitProbabilities <- s_y_list[[jj]]
+        sampler$setModel(newModel = tempmodel)
+      }
+
+      sampler.list[[jj]] <- sampler
+
     }
 
   }
@@ -379,6 +458,13 @@ surbart_original <- function(x.train, #either one matrix or list
 
       }
 
+      if(sparse){
+        tempmodel <- sampler.list[[mm]]$model
+        tempmodel@tree.prior@splitProbabilities <- s_y_list[[mm]]
+        sampler.list[[mm]]$setModel(newModel = tempmodel)
+      }
+
+
       #Draw all trees for outcome mm in iteration iter
       rep_mm <- sampler.list[[mm]]$run(0L, 1L) # construct BART sample using dbarts (V. Dorie)
 
@@ -408,6 +494,31 @@ surbart_original <- function(x.train, #either one matrix or list
       #   mu.cov.draw <- mu.cov + t(chol(V.cov)) %*% rnorm(ncol(V.cov))
       #   A0_draw[mm,1:(mm-1)] <- mu.cov.draw
       # }
+
+      if(sparse){
+        tempcounts <- fcount(sampler.list[[mm]]$getTrees()$var)
+        tempcounts <- tempcounts[tempcounts$x != -1, ]
+        var_count_y <- rep(0, p_y_vec[mm])
+        var_count_y[tempcounts$x] <- tempcounts$N
+        # var_count_y_mat[,mm] <- var_count_y
+
+        var_count_y_list[[mm]] <- var_count_y
+      }
+
+
+      if (sparse & (iter > floor(n.burnin * 0.5))) {
+        # s_update_z <- update_s(var_count_z, p_z, alpha_s_z)
+        # s_z <- s_update_z[[1]]
+
+        s_update_y <- update_s(var_count_y_list[[mm]], p_y_vec[mm], alpha_s_y_vec[mm])
+        s_y_list[[mm]] <- s_update_y[[1]]
+
+        if(alpha_split_prior){
+          # alpha_s_z <- update_alpha(s_z, alpha_scale_z, alpha_a_z, alpha_b_z, p_z, s_update_z[[2]])
+          alpha_s_y_vec[mm] <- update_alpha(s_y_list[[mm]], alpha_scale_y_vec[mm], alpha_a_y, alpha_b_y, p_y_vec[mm], s_update_y[[2]])
+        }
+      }
+
 
 
     } # end loop over mm
@@ -470,23 +581,15 @@ surbart_original <- function(x.train, #either one matrix or list
       Sigma_store[,,iter_min_burnin] <- Sigma_mat
 
 
+      if(sparse){
+        alpha_s_y_store_arr[,iter_min_burnin] <- alpha_s_y_vec
 
-    }
-
-
-
-
-
-
-
-
-
-
-
+        var_count_y_store_list[[iter_min_burnin]] <- var_count_y_list
+        s_prob_y_store_list[[iter_min_burnin]] <- s_y_list
+      }
+    } # end if n.iter > n.burnin
 
     if(!quiet) setTxtProgressBar(pb, iter)
-
-
 
     # if(iter %% print.opt == 0){
     #   print(paste("Gibbs Iteration", iter))

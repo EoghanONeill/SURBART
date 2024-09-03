@@ -32,7 +32,11 @@ surbart_original(
   sigmadbarts = NA_real_,
   print.opt = 100,
   quiet = FALSE,
-  outcome_draws = FALSE
+  outcome_draws = FALSE,
+  sparse = FALSE,
+  alpha_a_y = 0.5,
+  alpha_b_y = 1,
+  alpha_split_prior = TRUE
 )
 }
 \arguments{
@@ -85,6 +89,14 @@ surbart_original(
 \item{quiet}{Does not show progress bar if TRUE}
 
 \item{outcome_draws}{If TRUE, output draws of the outcome.}
+
+\item{sparse}{If equal to TRUE, use Linero Dirichlet prior on splitting probabilities}
+
+\item{alpha_a_y}{Linero alpha prior parameter for outcome equation splitting probabilities}
+
+\item{alpha_b_y}{Linero alpha prior parameter for outcome equation splitting probabilities}
+
+\item{alpha_split_prior}{If true, set hyperprior for Linero alpha parameter}
 }
 \value{
 The following objects are returned:
