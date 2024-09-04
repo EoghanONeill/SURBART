@@ -1,4 +1,11 @@
 
+make_01_norm <- function(x) {
+  a <- min(x)
+  b <- max(x)
+  return(function(y0) (y0 - a) / (b - a))
+}
+
+
 #' @title Seemingly Unrelated Regression Bayesian Additive Regression Trees implemented using MCMC with the original approach from Chakraborty (2016).
 #'
 #' @description Seemingly Unrelated Regression Bayesian Additive Regression Trees implemented using MCMC with the original approach from Chakraborty (2016).
@@ -7,6 +14,7 @@
 #' @import LaplacesDemon
 #' @import MASS
 #' @import collapse
+#' @import SoftBart
 #' @param x.train The training covariate data for all training observations. Matrix or list. If one matrix (not a list), then the same set of covariates are used for each outcome. Each element of the list is a covariate matrix that  corresponds to a different outcome variable. Number of rows equal to the number of observations. Number of columns equal to the number of covariates.
 #' @param x.test The test covariate data for all test observations. Matrix or list. If one matrix (not a list), then the same set of covariates are used for each outcome. Each element of the list is a covariate matrix that  corresponds to a different outcome variable. Number of rows equal to the number of observations. Number of columns equal to the number of covariates.
 #' @param y The training data list of vectors of outcomes. The length of the list should equal the number of types of outcomes. Each element of the list should be a vector of length equal to the number of units.
@@ -32,10 +40,6 @@
 #' @param print.opt Print every print.opt number of Gibbs samples.
 #' @param quiet Does not show progress bar if TRUE
 #' @param outcome_draws If TRUE, output draws of the outcome.
-#' @param sparse If equal to TRUE, use Linero Dirichlet prior on splitting probabilities
-#' @param alpha_a_y Linero alpha prior parameter for outcome equation splitting probabilities
-#' @param alpha_b_y Linero alpha prior parameter for outcome equation splitting probabilities
-#' @param alpha_split_prior If true, set hyperprior for Linero alpha parameter
 #' @export
 #' @return The following objects are returned:
 #' \item{mutrain_draws}{Matrix of MCMC draws of expected values for training observations. Number of rows equal to the number of training observations multiplied by the number of outcomes. The rows are ordered by beginning with all N (units') observations for the first outcome variable, then all N for the second outcome variable and so on. Number of columns equals n.iter.}
@@ -106,38 +110,51 @@
 #'
 #'
 #' @export
-surbart_original <- function(x.train, #either one matrix or list
-                           x.test, #either one matrix or list
-                           y,
-                           num_outcomes,
-                           num_obs,
-                           num_test_obs,
-                           n.iter=1000,
-                           n.burnin=100,
-                           n.trees = 50L,
-                           n.burn = 0L,
-                           n.samples = 1L,
-                           n.thin = 1L,
-                           n.chains = 1,
-                           n.threads = guessNumCores(),
-                           printEvery = 100L,
-                           printCutoffs = 0L,
-                           rngKind = "default",
-                           rngNormalKind = "default",
-                           rngSeed = NA_integer_,
-                           updateState = FALSE,
-                           tree.prior = dbarts:::cgm,
-                           node.prior = dbarts:::normal,
-                           resid.prior = dbarts:::chisq,
-                           proposal.probs = c(birth_death = 0.5, swap = 0.1, change = 0.4, birth = 0.5),
-                           sigmadbarts = NA_real_,
-                           print.opt = 100,
-                           quiet = FALSE,
-                           outcome_draws = FALSE,
-                           sparse = FALSE,
-                           alpha_a_y = 0.5,
-                           alpha_b_y = 1,
-                           alpha_split_prior = TRUE){
+soft_surbart_original <- function(x.train, #either one matrix or list
+                             x.test, #either one matrix or list
+                             y,
+                             num_outcomes,
+                             num_obs,
+                             num_test_obs,
+                             n.iter=1000,
+                             n.burnin=100,
+                             n.trees = 50L,
+                             n.burn = 0L,
+                             n.samples = 1L,
+                             n.thin = 1L,
+                             n.chains = 1,
+                             n.threads = guessNumCores(),
+                             printEvery = 100L,
+                             printCutoffs = 0L,
+                             rngKind = "default",
+                             rngNormalKind = "default",
+                             rngSeed = NA_integer_,
+                             updateState = FALSE,
+                             tree.prior = dbarts:::cgm,
+                             node.prior = dbarts:::normal,
+                             resid.prior = dbarts:::chisq,
+                             proposal.probs = c(birth_death = 0.5, swap = 0.1, change = 0.4, birth = 0.5),
+                             sigmadbarts = NA_real_,
+                             print.opt = 100,
+                             quiet = FALSE,
+                             outcome_draws = FALSE,
+                             SB_group = NULL,
+                             SB_alpha = 1,
+                             SB_beta = 2,
+                             SB_gamma = 0.95,
+                             SB_k = 2,
+                             SB_sigma_hat = NULL,
+                             SB_shape = 1,
+                             SB_width = 0.1,
+                             # SB_num_tree = 20,
+                             SB_alpha_scale = NULL,
+                             SB_alpha_shape_1 = 0.5,
+                             SB_alpha_shape_2 = 1,
+                             SB_tau_rate = 10,
+                             SB_num_tree_prob = NULL,
+                             SB_temperature = 1,
+                             SB_weights = NULL,
+                             SB_normalize_Y = TRUE){
 
 
 
@@ -189,10 +206,33 @@ surbart_original <- function(x.train, #either one matrix or list
   if(length(y[[1]]) != num_obs) stop("length of each vector element of the list y must equal number of observations.")
 
 
+  for(matind in 1:num_outcomes){
+
+    x.traintemp <- Xlist[[matind]]
+    x.testtemp <- Xtestlist[[matind]]
+
+    ecdfs   <- list()
+    for(i in 1:ncol(x.traintemp)) {
+      ecdfs[[i]] <- ecdf(x.traintemp[,i])
+      if(length(unique(x.traintemp[,i])) == 1) ecdfs[[i]] <- identity
+      if(length(unique(x.traintemp[,i])) == 2) ecdfs[[i]] <- make_01_norm(x.traintemp[,i])
+    }
+    for(i in 1:ncol(x.traintemp)) {
+        x.traintemp[,i] <- ecdfs[[i]](x.traintemp[,i])
+      if(nrow(x.testtemp) > 0){
+        x.testtemp[,i] <- ecdfs[[i]](x.testtemp[,i])
+      }
+    }
+
+    rm(ecdfs)
+
+    Xlist[[matind]] <- x.traintemp
+    Xtestlist[[matind]] <- x.testtemp
+
+  }
+
+
   n <- length(y)
-
-
-
 
   # draw = list(
   #   Z.mat = array(NA, dim = c(n, n.iter)),
@@ -258,19 +298,53 @@ surbart_original <- function(x.train, #either one matrix or list
 
   #Set tree sampler parameters
 
-  control <- dbartsControl(updateState = updateState, verbose = FALSE,  keepTrainingFits = TRUE,
-                           keepTrees = TRUE,
-                           n.trees = n.trees,
-                           n.burn = n.burn,
-                           n.samples = n.samples,
-                           n.thin = n.thin,
-                           n.chains = n.chains,
-                           n.threads = n.threads,
-                           printEvery = printEvery,
-                           printCutoffs = printCutoffs,
-                           rngKind = rngKind,
-                           rngNormalKind = rngNormalKind,
-                           rngSeed = rngSeed)
+  # control <- dbartsControl(updateState = updateState, verbose = FALSE,  keepTrainingFits = TRUE,
+  #                          keepTrees = TRUE,
+  #                          n.trees = n.trees,
+  #                          n.burn = n.burn,
+  #                          n.samples = n.samples,
+  #                          n.thin = n.thin,
+  #                          n.chains = n.chains,
+  #                          n.threads = n.threads,
+  #                          printEvery = printEvery,
+  #                          printCutoffs = printCutoffs,
+  #                          rngKind = rngKind,
+  #                          rngNormalKind = rngNormalKind,
+  #                          rngSeed = rngSeed)
+
+
+  opts <- Opts(update_sigma = FALSE, num_print = n.burnin + n.iter + 1)
+
+
+  hyperslist <- list()
+
+
+  for(i in 1:num_outcomes){
+
+    hyperslist[[i]] <- Hypers(Xlist[[i]], y[[i]],
+                     num_tree = n.trees, #sigma_hat = 1,
+                     group = SB_group,
+                     alpha = SB_alpha,
+                     beta = SB_beta,
+                     gamma = SB_gamma,
+                     k = SB_k,
+                     sigma_hat = NULL, #sighat,
+                     shape = SB_shape,
+                     width = SB_width,
+                     # num_tree = 20,
+                     alpha_scale = SB_alpha_scale,
+                     alpha_shape_1 = SB_alpha_shape_1,
+                     alpha_shape_2 = SB_alpha_shape_2,
+                     tau_rate = SB_tau_rate,
+                     num_tree_prob = SB_num_tree_prob,
+                     temperature = SB_temperature,
+                     weights = SB_weights,
+                     normalize_Y = SB_normalize_Y
+    )
+
+  }
+
+
 
 
   # print(colnames(Xmat.train))
@@ -278,120 +352,61 @@ surbart_original <- function(x.train, #either one matrix or list
   # print("begin dbarts")
 
 
-  if(sparse){
-
-    # s_y_mat <- matrix(NA, nrow = ncol(x.train), ncol = num_outcomes)
-    p_y_vec <- rep(NA, num_outcomes)
-    rho_y_vec <- rep(NA, num_outcomes)
-    alpha_s_y_vec <- rep(NA, num_outcomes)
-    alpha_scale_y_vec <- rep(NA, num_outcomes)
-    # var_count_y_mat <- matrix(NA, nrow = ncol(x.train), ncol = num_outcomes)
-
-    s_y_list <- list() # matrix(NA, nrow = ncol(x.train), ncol = num_outcomes)
-    var_count_y_list <- list() # matrix(NA, nrow = ncol(x.train), ncol = num_outcomes)
-
-    for (jj in 1:num_outcomes){
-
-      p_y <- ncol(Xlist[[jj]])
-
-      s_y <- rep(1 / p_y, p_y) # probability vector to be used during the growing process for DART feature weighting
-      rho_y <- p_y # For DART
-
-      if(alpha_split_prior){
-        alpha_s_y <- p_y
-      }else{
-        alpha_s_y <- 1
-      }
-      alpha_scale_y <- p_y
-
-      var_count_y <- rep(0, p_y)
-
-
-      # s_y_mat[, jj] <- s_y
-      p_y_vec[jj] <- p_y
-      rho_y_vec[jj] <- rho_y
-      alpha_s_y_vec[jj] <- alpha_s_y
-      alpha_scale_y_vec[jj] <- alpha_scale_y
-      # var_count_y_mat[,jj] <- var_count_y
-
-      s_y_list[[jj]] <- s_y
-      var_count_y_list[[jj]] <- var_count_y
-
-    }
-
-    alpha_s_y_store_arr <- matrix(NA, nrow = num_outcomes, ncol =  n.iter )
-    # var_count_y_store_arr <- array(NA, dim = c( p_y, num_outcomes, n.iter ))
-    # s_prob_y_store_arr <- array(NA, dim = c( p_y, num_outcomes, n.iter ))
-
-    var_count_y_store_list <- list()
-    s_prob_y_store_list <- list()
-
-  }
-
 
 
   #take initial tree draws
 
   sampler.list <- list()
+
+  # if(nrow(Xtestlist[[1]])==0){
   preds.train <- matrix(0, num_obs, num_outcomes)
 
-  if(nrow(Xtestlist[[1]])==0){
-
 
     for (jj in 1:num_outcomes){
 
-      Xmat.train <- data.frame(y = y[[jj]], x = Xlist[[jj]] )
+      sampler.list[[jj]] <- MakeForest(hyperslist[[jj]], opts, warn = FALSE)
 
-      sampler <- dbarts(y ~ .,
-                                   data = Xmat.train,
-                                   #test = x.test,
-                                   control = control,
-                                   tree.prior = tree.prior,
-                                   node.prior = node.prior,
-                                   resid.prior = resid.prior,
-                                   proposal.probs = proposal.probs,
-                                   sigma = sigmadbarts)
+      preds.train[,jj] <- sampler.list[[jj]]$do_predict( Xlist[[jj]])
 
-      if(sparse){
-        tempmodel <- sampler$model
-        tempmodel@tree.prior@splitProbabilities <- s_y_list[[jj]]
-        sampler$setModel(newModel = tempmodel)
-      }
-
-      sampler.list[[jj]] <- sampler
-      preds.train[,jj] <- sampler$predict(Xmat.train)[1,]
+      # Xmat.train <- data.frame(y = y[[jj]], x = Xlist[[jj]] )
+      #
+      # sampler <- dbarts(y ~ .,
+      #                   data = Xmat.train,
+      #                   #test = x.test,
+      #                   control = control,
+      #                   tree.prior = tree.prior,
+      #                   node.prior = node.prior,
+      #                   resid.prior = resid.prior,
+      #                   proposal.probs = proposal.probs,
+      #                   sigma = sigmadbarts)
+      #
+      # sampler.list[[jj]] <- sampler
 
     }
 
 
-  }else{
-    for (jj in 1:num_outcomes){
-
-      Xmat.train <- data.frame(y = y[[jj]], x = Xlist[[jj]] )
-      Xmat.test <- data.frame(x = Xtestlist[[jj]] )
-
-      sampler <- dbarts(y ~ .,
-                                   data = Xmat.train,
-                                   test = Xmat.test,
-                                   control = control,
-                                   tree.prior = tree.prior,
-                                   node.prior = node.prior,
-                                   resid.prior = resid.prior,
-                                   proposal.probs = proposal.probs,
-                                   sigma = sigmadbarts
-      )
-
-      if(sparse){
-        tempmodel <- sampler$model
-        tempmodel@tree.prior@splitProbabilities <- s_y_list[[jj]]
-        sampler$setModel(newModel = tempmodel)
-      }
-
-      sampler.list[[jj]] <- sampler
-      preds.train[,jj] <- sampler$predict(Xmat.train)[1,]
-    }
-
-  }
+  # }else{
+  #   for (jj in 1:num_outcomes){
+  #
+  #     Xmat.train <- data.frame(y = y[[jj]], x = Xlist[[jj]] )
+  #     Xmat.test <- data.frame(x = Xtestlist[[jj]] )
+  #
+  #     sampler <- dbarts(y ~ .,
+  #                       data = Xmat.train,
+  #                       test = Xmat.test,
+  #                       control = control,
+  #                       tree.prior = tree.prior,
+  #                       node.prior = node.prior,
+  #                       resid.prior = resid.prior,
+  #                       proposal.probs = proposal.probs,
+  #                       sigma = sigmadbarts
+  #     )
+  #
+  #     sampler.list[[jj]] <- sampler
+  #
+  #   }
+  #
+  # }
 
   sampler.run <- list()
 
@@ -430,8 +445,6 @@ surbart_original <- function(x.train, #either one matrix or list
   for(iter in 1:(n.iter+n.burnin)){
 
 
-
-
     for (mm in 1:num_outcomes){
       # if (mm > 1){
         # Z_mm <- eta[,1:(mm-1), drop=F]
@@ -449,40 +462,47 @@ surbart_original <- function(x.train, #either one matrix or list
 
         # if(iter ==1){
         #   # sampler.list[[mm]]$setResponse(y = ymat[,mm] )
-        #
+        #   tempy <- ymat[,mm] #- (ymat[,-mm]-preds.train[,-mm])%*%(solve(Sigma_mat[-mm,-mm]) %*% Sigma_mat[-mm,mm]  )
         # }else{
-          sampler.list[[mm]]$setResponse(y = ymat[,mm] - (ymat[,-mm]-preds.train[,-mm])%*%(solve(Sigma_mat[-mm,-mm]) %*% Sigma_mat[-mm,mm]  ) )
-          sampler.list[[mm]]$setSigma(sigma = sqrt(Sigma_mat[mm,mm] - Sigma_mat[mm,-mm]%*%(solve(Sigma_mat[-mm,-mm]) %*% Sigma_mat[-mm,mm] ))  )
+          tempy <- ymat[,mm] - (ymat[,-mm]-preds.train[,-mm])%*%(solve(Sigma_mat[-mm,-mm]) %*% Sigma_mat[-mm,mm]  )
+
+          # sampler.list[[mm]]$setResponse(y = ymat[,mm] - (ymat[,-mm]-preds.train[,-mm])%*%(solve(Sigma_mat[-mm,-mm]) %*% Sigma_mat[-mm,mm]  ) )
+          sampler.list[[mm]]$set_sigma(sqrt(Sigma_mat[mm,mm] - Sigma_mat[mm,-mm]%*%(solve(Sigma_mat[-mm,-mm]) %*% Sigma_mat[-mm,mm] ))  )
         # }
 
-
-
+      # }else{
+      #   tempy <- ymat[,mm] - (ymat[,-mm]-preds.train[,-mm])%*%(solve(Sigma_mat[-mm,-mm]) %*% Sigma_mat[-mm,mm]  )
       # }
 
-      if(sparse){
-        tempmodel <- sampler.list[[mm]]$model
-        tempmodel@tree.prior@splitProbabilities <- s_y_list[[mm]]
-        sampler.list[[mm]]$setModel(newModel = tempmodel)
-      }
 
 
       #Draw all trees for outcome mm in iteration iter
-      rep_mm <- sampler.list[[mm]]$run(0L, 1L) # construct BART sample using dbarts (V. Dorie)
+      # rep_mm <- sampler.list[[mm]]$run(0L, 1L) # construct BART sample using dbarts (V. Dorie)
+      mutrain <- t(sampler.list[[mm]]$do_gibbs(Xlist[[mm]], tempy, Xlist[[mm]], 1))
+      # mutest <- sampler.list[[jj]]$do_predict(x.test)
 
-      sampler.run[[mm]] <- rep_mm
+      # sampler.run[[mm]] <- rep_mm
 
       #line commented out because sampling from inverse wishart, not the prior from BAVART paper
       # sigma.mat[mm,] <- rep_mm$sigma
 
-      if (any(is.na(rep_mm$train))) break
-      eta[,mm] <- ymat[,mm] - rep_mm$train[,1]
+      if (any(is.na(mutrain))){
+        stop("Line 468. NA in predictions")
+      }
+      eta[,mm] <- ymat[,mm] - mutrain
       # A_draw[,mm] <- X.ginv%*%rep_mm$train
-      preds.train[,mm] <-  rep_mm$train[,1]
+      preds.train[,mm] <-  mutrain
+
+
+      if(nrow(Xtestlist[[1]])>0){
+        mutest <- sampler.list[[mm]]$do_predict(Xtestlist[[mm]])
+        preds.test[,mm] <- mutest
+      }
 
 
       # print("rep_mm$test[,1] =")
       # print(rep_mm$test[,1])
-      preds.test[,mm] <-  rep_mm$test[,1]
+      # preds.test[,mm] <-  rep_mm$test[,1]
 
       # count.mat[,mm] <- rep_mm$varcount
       # if (mm > 1){
@@ -495,31 +515,6 @@ surbart_original <- function(x.train, #either one matrix or list
       #   mu.cov.draw <- mu.cov + t(chol(V.cov)) %*% rnorm(ncol(V.cov))
       #   A0_draw[mm,1:(mm-1)] <- mu.cov.draw
       # }
-
-      if(sparse){
-        tempcounts <- fcount(sampler.list[[mm]]$getTrees()$var)
-        tempcounts <- tempcounts[tempcounts$x != -1, ]
-        var_count_y <- rep(0, p_y_vec[mm])
-        var_count_y[tempcounts$x] <- tempcounts$N
-        # var_count_y_mat[,mm] <- var_count_y
-
-        var_count_y_list[[mm]] <- var_count_y
-      }
-
-
-      if (sparse & (iter > floor(n.burnin * 0.5))) {
-        # s_update_z <- update_s(var_count_z, p_z, alpha_s_z)
-        # s_z <- s_update_z[[1]]
-
-        s_update_y <- update_s(var_count_y_list[[mm]], p_y_vec[mm], alpha_s_y_vec[mm])
-        s_y_list[[mm]] <- s_update_y[[1]]
-
-        if(alpha_split_prior){
-          # alpha_s_z <- update_alpha(s_z, alpha_scale_z, alpha_a_z, alpha_b_z, p_z, s_update_z[[2]])
-          alpha_s_y_vec[mm] <- update_alpha(s_y_list[[mm]], alpha_scale_y_vec[mm], alpha_a_y, alpha_b_y, p_y_vec[mm], s_update_y[[2]])
-        }
-      }
-
 
 
     } # end loop over mm
@@ -582,12 +577,6 @@ surbart_original <- function(x.train, #either one matrix or list
       Sigma_store[,,iter_min_burnin] <- Sigma_mat
 
 
-      if(sparse){
-        alpha_s_y_store_arr[,iter_min_burnin] <- alpha_s_y_vec
-
-        var_count_y_store_list[[iter_min_burnin]] <- var_count_y_list
-        s_prob_y_store_list[[iter_min_burnin]] <- s_y_list
-      }
     } # end if n.iter > n.burnin
 
     if(!quiet) setTxtProgressBar(pb, iter)
