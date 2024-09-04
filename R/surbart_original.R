@@ -584,7 +584,6 @@ surbart_original <- function(x.train, #either one matrix or list
 
       if(sparse){
         alpha_s_y_store_arr[,iter_min_burnin] <- alpha_s_y_vec
-
         var_count_y_store_list[[iter_min_burnin]] <- var_count_y_list
         s_prob_y_store_list[[iter_min_burnin]] <- s_y_list
       }
@@ -612,6 +611,13 @@ surbart_original <- function(x.train, #either one matrix or list
   }
 
   ret_list$Sigma_draws <- Sigma_store
+
+
+  if(sparse){
+    ret_list$alpha_s_y_store_arr <- alpha_s_y_store_arr
+    ret_list$var_count_y_store_list <- var_count_y_store_list
+    ret_list$s_prob_y_store_list <- s_prob_y_store_list
+  }
 
   return(ret_list)
 
