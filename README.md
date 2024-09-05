@@ -10,11 +10,13 @@ The goal of SURBART is to provide an implementation of Seemingly Unrelated Regre
 
 The package contains both an implementation as described by Chakraborty (2016) and implementations based on equation-by-equation estimation as described by Huber and Rossini (2021) and Huber et al. (2020). The code is mostly based on the Mixed Frequency BAVART implementation of Huber et al (2020) available at https://github.com/mpfarrho/mf-bavart .
 
-The function ``surbart_original()`` is an implementation based on Chakraborty (2016).
+The function ``surbart_original()`` is an implementation based on Chakraborty (2016). The function ``soft_surbart_original()`` extends the method to soft trees.
 
 The function ``surbart_eqbyeq_hs()`` is based on the equation-by-equation implementaiton with horseshoe prior for the covariances from Huber and Rossini (2021). The implementation is an edited version of that available at https://github.com/mpfarrho/mf-bavart  , except it allows for different covariate matrices for each outcome, but not mixed frequency data.
 
 The function ``surbart_eqbyeq()`` is based on the equation-by-equation implementaiton from Huber and Rossini (2021), with the inverse Wishart covariance matrix prior from Chakraborty (2016).
+
+``surbart_original()`` and ``soft_surbart_original()`` appear to give better results. ``surbart_eqbyeq_hs()``and  ``surbart_eqbyeq()`` might contain bugs.
 
 Chakraborty, S. (2016). Bayesian additive regression tree for seemingly unrelated regression with automatic tree selection. In Handbook of Statistics (Vol. 35, pp. 229-251). Elsevier.
 
@@ -137,6 +139,27 @@ mathpredsurbart_original <- apply(surbartres_original$mutest_draws[,,2],2,mean)
 sqrt(mean((readpredsurbart_original - hsb2test$read)^2))
 
 sqrt(mean((mathpredsurbart_original - hsb2test$math)^2))
+
+
+
+
+soft_surbartres_original <- soft_surbart_original(x.train = xtrain, #either one matrix or list
+               x.test = xtest, #either one matrix or list
+               y = ylist,
+               2,
+               nrow(hsb2train),
+               nrow(hsb2test),
+               n.iter = 1000,
+               n.burnin = 100)
+
+
+readpredsoft_surbart_original <- apply(soft_surbartres_original$mutest_draws[,,1],2,mean)
+
+mathpredsoft_surbart_original <- apply(soft_surbartres_original$mutest_draws[,,2],2,mean)
+
+sqrt(mean((readpredsoft_surbart_original - hsb2test$read)^2))
+
+sqrt(mean((mathpredsoft_surbart_original - hsb2test$math)^2))
 
 
 
