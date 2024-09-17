@@ -359,7 +359,7 @@ surbart_original <- function(x.train, #either one matrix or list
       }
 
       sampler.list[[jj]] <- sampler
-      preds.train[,jj] <- sampler$predict(Xmat.train)[1,]
+      preds.train[,jj] <- sampler$predict(Xmat.train)[,1]
 
     }
 
@@ -388,7 +388,7 @@ surbart_original <- function(x.train, #either one matrix or list
       }
 
       sampler.list[[jj]] <- sampler
-      preds.train[,jj] <- sampler$predict(Xmat.train)[1,]
+      preds.train[,jj] <- sampler$predict(Xmat.train)[,1]
     }
 
   }
